@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+@theme inline {
+  --font-sans: var(--font-nunito);
+}
+
+/* Avatar kleur-thema's */
+:root {
+  --avatar-ollie: #FFB800;
+  --avatar-leo: #FF6B35;
+  --avatar-stella: #7C3AED;
+  --avatar-max: #059669;
+}
+
+/* CSS animaties voor avatar-reacties */
+@keyframes bounce-in {
+  0%   { transform: scale(0.8) translateY(0); }
+  40%  { transform: scale(1.15) translateY(-12px); }
+  70%  { transform: scale(0.95) translateY(0); }
+  100% { transform: scale(1) translateY(0); }
+}
+
+@keyframes wiggle {
+  0%   { transform: rotate(0deg); }
+  15%  { transform: rotate(-8deg); }
+  30%  { transform: rotate(8deg); }
+  45%  { transform: rotate(-6deg); }
+  60%  { transform: rotate(6deg); }
+  75%  { transform: rotate(-3deg); }
+  100% { transform: rotate(0deg); }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { filter: drop-shadow(0 0 0px transparent); }
+  50%       { filter: drop-shadow(0 0 12px rgba(255, 184, 0, 0.5)); }
+}
+
+@keyframes confetti-fall {
+  0%   { transform: translateY(-20px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(60px) rotate(360deg); opacity: 0; }
+}
+
+@keyframes pop-in {
+  0%   { transform: scale(0); opacity: 0; }
+  70%  { transform: scale(1.1); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-6px); }
+}
+
+.animate-bounce-in   { animation: bounce-in 0.5s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+.animate-wiggle      { animation: wiggle 0.5s ease-in-out; }
+.animate-pulse-glow  { animation: pulse-glow 2s ease-in-out infinite; }
+.animate-pop-in      { animation: pop-in 0.3s cubic-bezier(0.36, 0.07, 0.19, 0.97); }
+.animate-float       { animation: float 3s ease-in-out infinite; }

@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(gsd:autonomous)",
+      "Skill(gsd:new-milestone)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "Bash(node:*)",
+      "Skill(gsd:plan-phase)",
+      "Bash(npx next:*)"
+    ]
+  }
+}
