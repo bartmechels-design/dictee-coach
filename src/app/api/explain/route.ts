@@ -27,7 +27,11 @@ export async function POST(request: Request) {
   // Stap 1: check pre-gegenereerde cache (0ms, €0)
   const cacheKey = `${word}_${grade}`
   if (explanationCache[cacheKey]) {
-    return Response.json({ explanation: explanationCache[cacheKey], cached: true })
+    const cached = explanationCache[cacheKey]
+    // Sla cache-entries over die de ruwe regel bevatten
+    if (!cached.toLowerCase().includes('gewoon woord')) {
+      return Response.json({ explanation: cached, cached: true })
+    }
   }
 
   // Stap 2: zoek vaste regel in woordenbank
@@ -36,6 +40,11 @@ export async function POST(request: Request) {
   if (!entry) {
     // Woord niet in standaard woordenbank (bijv. eigen lijst leerkracht)
     return generateLiveExplanation(word, grade, null, null)
+  }
+
+  // Geen uitleg voor triviale woorden — "Gewoon woord" is geen nuttige tip
+  if (!entry.mnemonic && entry.rule.toLowerCase().includes('gewoon woord')) {
+    return Response.json({ explanation: null, cached: false })
   }
 
   // Stap 3: gebruik vaste regel als basis voor Claude Haiku
