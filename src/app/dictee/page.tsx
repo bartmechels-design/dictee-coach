@@ -89,7 +89,7 @@ export default function DicteePage() {
     }
   }
 
-  async function fetchExplanation(word: WordEntry): Promise<string> {
+  async function fetchExplanation(word: WordEntry): Promise<string | null> {
     try {
       const res = await fetch('/api/explain', {
         method: 'POST',
