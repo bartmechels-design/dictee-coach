@@ -37,7 +37,10 @@ export async function createSession(
     .select()
     .single()
 
-  if (error) throw new Error(error.message)
+  if (error) {
+    console.warn('Session tracking unavailable:', error.message)
+    return { id: crypto.randomUUID(), user_id: userId, list_id: listId, child_name: childName, total_words: 0, correct_count: 0, completed_at: null, created_at: new Date().toISOString() } as DicteeSession
+  }
   return data
 }
 
