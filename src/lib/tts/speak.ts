@@ -106,8 +106,8 @@ export function useTTS(): UseTtsReturn {
   // Simple one-shot speak
   const speak = useCallback(async (word: string) => {
     if (state === 'loading' || state === 'playing') return
-    abortRef.current = false
     stop()
+    abortRef.current = false
     setState('loading')
     setError(null)
     try {
@@ -125,8 +125,8 @@ export function useTTS(): UseTtsReturn {
   //   Groep 4+: word → 2s → sentence → 2s → word
   const speakDictee = useCallback(async (word: string, grade: number, sentence?: string | null) => {
     if (state === 'loading' || state === 'playing') return
-    abortRef.current = false
     stop()
+    abortRef.current = false
     setState('loading')
     setError(null)
 
