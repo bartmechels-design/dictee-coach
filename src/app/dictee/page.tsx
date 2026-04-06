@@ -97,9 +97,9 @@ export default function DicteePage() {
         body: JSON.stringify({ word: word.word, grade: word.grade }),
       })
       const data = await res.json()
-      return data.explanation ?? word.rule
+      return data.explanation ?? null
     } catch {
-      return word.rule
+      return null
     }
   }
 
