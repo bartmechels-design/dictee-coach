@@ -49,11 +49,7 @@ async function generateLiveExplanation(
   mnemonic: string | null
 ): Promise<Response> {
   if (!process.env.ANTHROPIC_API_KEY) {
-    // Geen API key — geef vaste regel terug als fallback
-    return Response.json({
-      explanation: rule ?? `Dit woord is "${word}". Let goed op de spelling!`,
-      cached: false,
-    })
+    return Response.json({ explanation: null, cached: false })
   }
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -89,10 +85,6 @@ Schrijf ALLEEN de uitleg, geen intro.`
     return Response.json({ explanation, cached: false })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout'
-    return Response.json({
-      explanation: rule ?? `Dit woord is "${word}". Let goed op de spelling!`,
-      error: message,
-      cached: false,
-    })
+    return Response.json({ explanation: null, error: message, cached: false })
   }
 }
