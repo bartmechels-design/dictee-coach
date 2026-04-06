@@ -36,6 +36,7 @@ export default function DicteePage() {
   const [avatarState, setAvatarState] = useState<AvatarState>('idle')
   const [explanation, setExplanation] = useState<string | null>(null)
   const [sentence, setSentence] = useState<string | null>(null)
+  const [sentenceLoading, setSentenceLoading] = useState(false)
   const [lastTyped, setLastTyped] = useState('')
   const wordStartTime = useRef<number>(Date.now())
   const answerInputRef = useRef<AnswerInputHandle>(null)
@@ -93,16 +94,17 @@ export default function DicteePage() {
   // Fetch sentence for grade 4+ words (used in dictee audio flow)
   useEffect(() => {
     const w = words[wordIndex]
-    if (!w || w.grade < 4) { setSentence(null); return }
+    if (!w || w.grade < 4) { setSentence(null); setSentenceLoading(false); return }
     setSentence(null)
+    setSentenceLoading(true)
     fetch('/api/sentence', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ word: w.word, grade: w.grade }),
     })
       .then(r => r.json())
-      .then(data => setSentence(data.sentence ?? null))
-      .catch(() => setSentence(null))
+      .then(data => { setSentence(data.sentence ?? null); setSentenceLoading(false) })
+      .catch(() => { setSentence(null); setSentenceLoading(false) })
   }, [words, wordIndex])
 
   async function fetchExplanation(word: WordEntry): Promise<string | null> {
@@ -179,6 +181,7 @@ export default function DicteePage() {
     const next = wordIndex + 1
     setExplanation(null)
     setSentence(null)
+    setSentenceLoading(false)
     setAvatarState('idle')
     if (next >= words.length) {
       const correct = results.filter(r => r.is_correct).length
@@ -202,6 +205,7 @@ export default function DicteePage() {
     setAvatarState('idle')
     setExplanation(null)
     setSentence(null)
+    setSentenceLoading(false)
   }
 
   const avatar = getAvatar(avatarId)
@@ -279,7 +283,7 @@ export default function DicteePage() {
             {stage === 'feedback-wrong1' && (
               <FeedbackBanner isCorrect={false} correctWord={currentWord.word} typedAnswer={lastTyped} attempt={1} />
             )}
-            <AudioButton word={currentWord.word} grade={currentWord.grade} sentence={sentence} label="Hoor het woord" avatarColor={avatar.color} onPlayEnd={() => answerInputRef.current?.focus()} />
+            <AudioButton word={currentWord.word} grade={currentWord.grade} sentence={sentence} label={sentenceLoading ? 'Voorbereiden...' : 'Hoor het woord'} avatarColor={avatar.color} onPlayEnd={() => answerInputRef.current?.focus()} disabled={sentenceLoading} />
             <AnswerInput ref={answerInputRef} value={answer} onChange={setAnswer} onSubmit={checkAnswer} />
             {error && <ErrorMessage message={error} />}
             {stage === 'feedback-wrong1' ? (

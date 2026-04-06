@@ -10,6 +10,7 @@ type Props = {
   label?: string
   avatarColor?: string
   onPlayEnd?: () => void
+  disabled?: boolean
 }
 
 export default function AudioButton({
@@ -19,6 +20,7 @@ export default function AudioButton({
   label = 'Hoor het woord',
   avatarColor = '#F59E0B',
   onPlayEnd,
+  disabled: externalDisabled = false,
 }: Props) {
   const { state, speakDictee } = useTTS()
   const prevState = useRef(state)
@@ -31,7 +33,7 @@ export default function AudioButton({
     prevState.current = state
   }, [state, onPlayEnd])
 
-  const isActive = state === 'loading' || state === 'playing'
+  const isActive = state === 'loading' || state === 'playing' || externalDisabled
 
   return (
     <button
