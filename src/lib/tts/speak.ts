@@ -7,92 +7,154 @@ type TtsState = 'idle' | 'loading' | 'playing' | 'error'
 export type UseTtsReturn = {
   state: TtsState
   error: string | null
-  usingFallback: boolean
-  speak: (word: string) => Promise<void>
+  speak: (word: string) => void
+  speakDictee: (word: string, grade: number, sentence?: string | null) => void
   stop: () => void
 }
 
-/**
- * Static-first TTS — volgorde:
- * 1. /audio/{word}.mp3  (pre-gegenereerd, instant, 0 API-call)
- * 2. /api/tts           (on-demand OpenAI, voor eigen woordenlijsten)
- * 3. SpeechSynthesis    (browser fallback, werkt altijd)
- *
- * iOS Safari vereist expliciete gebruikersinteractie vóór audio.
- * Avatar-tap bij sessiestart is die interactie.
- */
 export function useTTS(): UseTtsReturn {
   const [state, setState] = useState<TtsState>('idle')
   const [error, setError] = useState<string | null>(null)
-  const [usingFallback, setUsingFallback] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const abortRef = useRef(false)
 
   const stop = useCallback(() => {
+    abortRef.current = true
     if (audioRef.current) {
       audioRef.current.pause()
+      audioRef.current.src = ''
       audioRef.current = null
     }
     window.speechSynthesis?.cancel()
     setState('idle')
   }, [])
 
-  const speakWithBrowser = useCallback((word: string) => {
-    setUsingFallback(true)
-    setState('playing')
-    const utterance = new SpeechSynthesisUtterance(word)
-    utterance.lang = 'nl-NL'
-    utterance.rate = 0.85
-    utterance.onend = () => setState('idle')
-    utterance.onerror = () => setState('error')
-    window.speechSynthesis.speak(utterance)
-  }, [])
-
-  const tryPlayUrl = useCallback((url: string, isBlob: boolean, word: string): Promise<boolean> => {
-    return new Promise(resolve => {
+  // Play audio from URL; resolves when playback ends
+  const playUrl = useCallback((url: string, isBlob: boolean): Promise<void> => {
+    return new Promise((resolve, reject) => {
       const audio = new Audio(url)
       audioRef.current = audio
-      let started = false
+      let playing = false
 
       audio.oncanplaythrough = () => {
-        if (started) return
-        started = true
-        setState('playing')
-        audio.play().then(() => resolve(true)).catch(() => resolve(false))
+        if (playing) return
+        playing = true
+        audio.play().catch(reject)
       }
       audio.onended = () => {
         if (isBlob) URL.revokeObjectURL(url)
-        setState('idle')
+        resolve()
       }
       audio.onerror = () => {
         if (isBlob) URL.revokeObjectURL(url)
-        resolve(false)
+        reject(new Error('audio-error'))
       }
-      // timeout: als bestand niet laadt binnen 3s, ga door
-      setTimeout(() => { if (!started) resolve(false) }, 3000)
+      setTimeout(() => { if (!playing) reject(new Error('timeout')) }, 6000)
       audio.load()
     })
   }, [])
 
+  // Speak via browser synthesis; resolves when done
+  const speakBrowser = useCallback((text: string): Promise<void> => {
+    return new Promise(resolve => {
+      const utt = new SpeechSynthesisUtterance(text)
+      utt.lang = 'nl-NL'
+      utt.rate = 0.85
+      utt.onend = () => resolve()
+      utt.onerror = () => resolve() // don't block on error
+      window.speechSynthesis.speak(utt)
+    })
+  }, [])
+
+  // Play a single piece of text: static file → API TTS → browser
+  const playText = useCallback(async (text: string): Promise<void> => {
+    if (abortRef.current) return
+
+    // Static pre-generated file (single words only)
+    const isWord = !text.includes(' ')
+    if (isWord) {
+      try {
+        const check = await fetch(`/audio/${encodeURIComponent(text)}.mp3`, { method: 'HEAD' })
+        if (check.ok) {
+          await playUrl(`/audio/${encodeURIComponent(text)}.mp3`, false)
+          return
+        }
+      } catch { /* continue */ }
+    }
+
+    // Google Cloud TTS via API
+    try {
+      const res = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      })
+      if (res.ok) {
+        const blob = await res.blob()
+        const url = URL.createObjectURL(blob)
+        await playUrl(url, true)
+        return
+      }
+    } catch { /* continue */ }
+
+    // Browser speech synthesis fallback
+    await speakBrowser(text)
+  }, [playUrl, speakBrowser])
+
+  const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+
+  // Simple one-shot speak
   const speak = useCallback(async (word: string) => {
     if (state === 'loading' || state === 'playing') return
+    abortRef.current = false
     stop()
     setState('loading')
     setError(null)
-    setUsingFallback(false)
-
-    // Stap 1: static pre-generated file (instant, geen API)
     try {
-      const check = await fetch(`/audio/${word}.mp3`, { method: 'HEAD' })
-      if (check.ok) {
-        const ok = await tryPlayUrl(`/audio/${word}.mp3`, false, word)
-        if (ok) return
+      setState('playing')
+      await playText(word)
+    } catch {
+      setState('error')
+      return
+    }
+    setState('idle')
+  }, [state, stop, playText])
+
+  // Classroom dictee format:
+  //   Groep 3:  word → 2s → word
+  //   Groep 4+: word → 2s → sentence → 2s → word
+  const speakDictee = useCallback(async (word: string, grade: number, sentence?: string | null) => {
+    if (state === 'loading' || state === 'playing') return
+    abortRef.current = false
+    stop()
+    setState('loading')
+    setError(null)
+
+    try {
+      setState('playing')
+
+      await playText(word)
+      if (abortRef.current) { setState('idle'); return }
+
+      await sleep(2000)
+      if (abortRef.current) { setState('idle'); return }
+
+      if (grade >= 4 && sentence) {
+        await playText(sentence)
+        if (abortRef.current) { setState('idle'); return }
+
+        await sleep(2000)
+        if (abortRef.current) { setState('idle'); return }
       }
-    } catch { /* ga door */ }
 
-    // Stap 2: browser stem (fallback)
-    // API fallback disabled — use static files or browser only
-    speakWithBrowser(word)
-  }, [state, stop, tryPlayUrl, speakWithBrowser])
+      await playText(word)
+    } catch {
+      setState('error')
+      return
+    }
 
-  return { state, error, usingFallback, speak, stop }
+    setState('idle')
+  }, [state, stop, playText])
+
+  return { state, error, speak, speakDictee, stop }
 }

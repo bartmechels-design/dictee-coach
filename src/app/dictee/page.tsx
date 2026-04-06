@@ -35,6 +35,7 @@ export default function DicteePage() {
   const [avatarId, setAvatarId] = useState<AvatarId>('ollie')
   const [avatarState, setAvatarState] = useState<AvatarState>('idle')
   const [explanation, setExplanation] = useState<string | null>(null)
+  const [sentence, setSentence] = useState<string | null>(null)
   const [lastTyped, setLastTyped] = useState('')
   const wordStartTime = useRef<number>(Date.now())
   const answerInputRef = useRef<AnswerInputHandle>(null)
@@ -88,6 +89,21 @@ export default function DicteePage() {
       setError(err instanceof Error ? err.message : 'Sessie aanmaken mislukt')
     }
   }
+
+  // Fetch sentence for grade 4+ words (used in dictee audio flow)
+  useEffect(() => {
+    const w = words[wordIndex]
+    if (!w || w.grade < 4) { setSentence(null); return }
+    setSentence(null)
+    fetch('/api/sentence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ word: w.word, grade: w.grade }),
+    })
+      .then(r => r.json())
+      .then(data => setSentence(data.sentence ?? null))
+      .catch(() => setSentence(null))
+  }, [words, wordIndex])
 
   async function fetchExplanation(word: WordEntry): Promise<string | null> {
     try {
@@ -162,6 +178,7 @@ export default function DicteePage() {
   async function nextWord() {
     const next = wordIndex + 1
     setExplanation(null)
+    setSentence(null)
     setAvatarState('idle')
     if (next >= words.length) {
       const correct = results.filter(r => r.is_correct).length
@@ -184,6 +201,7 @@ export default function DicteePage() {
     setAnswer('')
     setAvatarState('idle')
     setExplanation(null)
+    setSentence(null)
   }
 
   const avatar = getAvatar(avatarId)
@@ -261,7 +279,7 @@ export default function DicteePage() {
             {stage === 'feedback-wrong1' && (
               <FeedbackBanner isCorrect={false} correctWord={currentWord.word} typedAnswer={lastTyped} attempt={1} />
             )}
-            <AudioButton word={currentWord.word} label="Hoor het woord" avatarColor={avatar.color} onPlayEnd={() => answerInputRef.current?.focus()} />
+            <AudioButton word={currentWord.word} grade={currentWord.grade} sentence={sentence} label="Hoor het woord" avatarColor={avatar.color} onPlayEnd={() => answerInputRef.current?.focus()} />
             <AnswerInput ref={answerInputRef} value={answer} onChange={setAnswer} onSubmit={checkAnswer} />
             {error && <ErrorMessage message={error} />}
             {stage === 'feedback-wrong1' ? (

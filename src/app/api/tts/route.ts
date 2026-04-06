@@ -6,7 +6,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json()
-    word = body.word?.trim()
+    word = (body.text || body.word)?.trim()
   } catch {
     return Response.json({ error: 'Ongeldig verzoek' }, { status: 400 })
   }
