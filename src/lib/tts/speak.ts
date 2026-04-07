@@ -6,7 +6,6 @@ type TtsState = 'idle' | 'loading' | 'playing' | 'error'
 
 export type UseTtsReturn = {
   state: TtsState
-  error: string | null
   speak: (word: string) => void
   speakDictee: (word: string, grade: number, sentence?: string | null) => void
   stop: () => void
@@ -14,147 +13,100 @@ export type UseTtsReturn = {
 
 export function useTTS(): UseTtsReturn {
   const [state, setState] = useState<TtsState>('idle')
-  const [error, setError] = useState<string | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const abortRef = useRef(false)
 
   const stop = useCallback(() => {
-    abortRef.current = true
     if (audioRef.current) {
       audioRef.current.pause()
       audioRef.current.src = ''
       audioRef.current = null
     }
-    window.speechSynthesis?.cancel()
     setState('idle')
   }, [])
 
-  // Play audio from URL; resolves when playback ends
-  const playUrl = useCallback((url: string, isBlob: boolean): Promise<void> => {
+  const playBlob = useCallback((blob: Blob): Promise<void> => {
     return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob)
       const audio = new Audio(url)
       audioRef.current = audio
-      let playing = false
 
-      audio.oncanplaythrough = () => {
-        if (playing) return
-        playing = true
-        audio.play().catch(reject)
-      }
-      audio.onended = () => {
-        if (isBlob) URL.revokeObjectURL(url)
-        resolve()
-      }
-      audio.onerror = () => {
-        if (isBlob) URL.revokeObjectURL(url)
-        reject(new Error('audio-error'))
-      }
-      setTimeout(() => { if (!playing) reject(new Error('timeout')) }, 6000)
-      audio.load()
+      audio.onended = () => { URL.revokeObjectURL(url); resolve() }
+      audio.onerror = () => { URL.revokeObjectURL(url); reject(new Error('audio-error')) }
+      audio.play().catch(reject)
     })
   }, [])
 
-  // Speak via browser synthesis; resolves when done
-  const speakBrowser = useCallback((text: string): Promise<void> => {
-    return new Promise(resolve => {
-      const utt = new SpeechSynthesisUtterance(text)
-      utt.lang = 'nl-NL'
-      utt.rate = 0.85
-      utt.onend = () => resolve()
-      utt.onerror = () => resolve() // don't block on error
-      window.speechSynthesis.speak(utt)
-    })
-  }, [])
+  // Classroom dictee via één SSML-verzoek (word→2s→[sentence→2s]→word)
+  const speakDictee = useCallback(async (word: string, grade: number, sentence?: string | null) => {
+    if (state !== 'idle') return
+    stop()
+    setState('loading')
 
-  // Play a single piece of text: static file → API TTS → browser
-  const playText = useCallback(async (text: string): Promise<void> => {
-    if (abortRef.current) return
+    try {
+      const res = await fetch('/api/dictee-tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ word, grade, sentence: sentence ?? null }),
+      })
 
-    // Static pre-generated file (single words only)
-    const isWord = !text.includes(' ')
-    if (isWord) {
-      try {
-        const check = await fetch(`/audio/${encodeURIComponent(text)}.mp3`, { method: 'HEAD' })
-        if (check.ok) {
-          await playUrl(`/audio/${encodeURIComponent(text)}.mp3`, false)
-          return
-        }
-      } catch { /* continue */ }
+      if (!res.ok) throw new Error('TTS mislukt')
+      const blob = await res.blob()
+      setState('playing')
+      await playBlob(blob)
+    } catch {
+      // Fallback: browser synthesis met handmatige pauze
+      setState('playing')
+      await speakBrowserDictee(word, grade, sentence ?? null)
     }
 
-    // Google Cloud TTS via API
+    setState('idle')
+  }, [state, stop, playBlob])
+
+  // Enkelvoudig woord (voor herhaalpogingen e.d.)
+  const speak = useCallback(async (word: string) => {
+    if (state !== 'idle') return
+    stop()
+    setState('loading')
+
     try {
       const res = await fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text: word }),
       })
-      if (res.ok) {
-        const blob = await res.blob()
-        const url = URL.createObjectURL(blob)
-        await playUrl(url, true)
-        return
-      }
-    } catch { /* continue */ }
-
-    // Browser speech synthesis fallback
-    await speakBrowser(text)
-  }, [playUrl, speakBrowser])
-
-  const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
-
-  // Simple one-shot speak
-  const speak = useCallback(async (word: string) => {
-    if (state === 'loading' || state === 'playing') return
-    stop()
-    abortRef.current = false
-    setState('loading')
-    setError(null)
-    try {
+      if (!res.ok) throw new Error('TTS mislukt')
+      const blob = await res.blob()
       setState('playing')
-      await playText(word)
+      await playBlob(blob)
     } catch {
-      setState('error')
-      return
-    }
-    setState('idle')
-  }, [state, stop, playText])
-
-  // Classroom dictee format:
-  //   Groep 3:  word → 2s → word
-  //   Groep 4+: word → 2s → sentence → 2s → word
-  const speakDictee = useCallback(async (word: string, grade: number, sentence?: string | null) => {
-    if (state === 'loading' || state === 'playing') return
-    stop()
-    abortRef.current = false
-    setState('loading')
-    setError(null)
-
-    try {
       setState('playing')
-
-      await playText(word)
-      if (abortRef.current) { setState('idle'); return }
-
-      await sleep(2000)
-      if (abortRef.current) { setState('idle'); return }
-
-      if (grade >= 4 && sentence) {
-        await playText(sentence)
-        if (abortRef.current) { setState('idle'); return }
-
-        await sleep(2000)
-        if (abortRef.current) { setState('idle'); return }
-      }
-
-      await playText(word)
-    } catch {
-      setState('error')
-      return
+      await speakBrowserWord(word)
     }
 
     setState('idle')
-  }, [state, stop, playText])
+  }, [state, stop, playBlob])
 
-  return { state, error, speak, speakDictee, stop }
+  return { state, speak, speakDictee, stop }
+}
+
+// Browser speech synthesis helpers (buiten hook, geen state nodig)
+function speakBrowserWord(text: string): Promise<void> {
+  return new Promise(resolve => {
+    const utt = new SpeechSynthesisUtterance(text)
+    utt.lang = 'nl-NL'
+    utt.rate = 0.85
+    utt.onend = () => resolve()
+    utt.onerror = () => resolve()
+    window.speechSynthesis.speak(utt)
+  })
+}
+
+async function speakBrowserDictee(word: string, grade: number, sentence: string | null): Promise<void> {
+  await speakBrowserWord(word)
+  await new Promise<void>(r => setTimeout(r, 2000))
+  if (grade >= 4 && sentence) {
+    await speakBrowserWord(sentence)
+    await new Promise<void>(r => setTimeout(r, 2000))
+  }
+  await speakBrowserWord(word)
 }
