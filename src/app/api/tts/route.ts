@@ -1,66 +1,49 @@
-import * as path from 'path'
-import { TextToSpeechClient } from '@google-cloud/text-to-speech'
-
-function getTTSClient() {
-  if (process.env.GOOGLE_CREDENTIALS_JSON) {
-    return new TextToSpeechClient({
-      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
-    })
-  }
-  return new TextToSpeechClient({
-    keyFilename: path.join(process.cwd(), 'credentials.json'),
-  })
-}
-
 export async function POST(request: Request) {
-  let word: string
+  let text: string
 
   try {
     const body = await request.json()
-    word = (body.text || body.word)?.trim()
+    text = (body.text || body.word)?.trim()
   } catch {
     return Response.json({ error: 'Ongeldig verzoek' }, { status: 400 })
   }
 
-  if (!word) {
-    return Response.json({ error: 'Geen woord opgegeven' }, { status: 400 })
+  if (!text) return Response.json({ error: 'Geen tekst opgegeven' }, { status: 400 })
+
+  if (!process.env.OPENAI_API_KEY) {
+    return Response.json({ error: 'Geen TTS API key' }, { status: 500 })
   }
 
   try {
-    const client = getTTSClient()
+    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'tts-1-hd',
+        input: text,
+        voice: 'nova',   // heldere vrouwelijke stem, goed voor NL
+        speed: 0.85,
+        response_format: 'mp3',
+      }),
+    })
 
-    const request = {
-      input: { text: word },
-      voice: {
-        languageCode: 'nl-NL',
-        name: 'nl-NL-Standard-A',
-      },
-      audioConfig: {
-        audioEncoding: 'MP3',
-        pitch: 0,
-        speakingRate: 0.9,
-      },
+    if (!res.ok) {
+      const err = await res.text()
+      return Response.json({ error: `OpenAI TTS: ${err}` }, { status: 500 })
     }
 
-    const [response] = await client.synthesizeSpeech(request as any)
-    const audioContent = response.audioContent
-
-    if (!audioContent) {
-      return Response.json({ error: 'Geen audio gegenereerd' }, { status: 500 })
-    }
-
-    const buffer = Buffer.isBuffer(audioContent)
-      ? audioContent
-      : Buffer.from(audioContent as any)
-
+    const buffer = await res.arrayBuffer()
     return new Response(buffer, {
       headers: {
         'Content-Type': 'audio/mpeg',
-        'Cache-Control': 'public, max-age=3600',
+        'Cache-Control': 'public, max-age=86400',
       },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Onbekende fout'
-    return Response.json({ error: `TTS mislukt: ${message}` }, { status: 500 })
+    return Response.json({ error: message }, { status: 500 })
   }
 }
