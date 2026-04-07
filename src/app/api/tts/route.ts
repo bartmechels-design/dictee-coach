@@ -1,3 +1,7 @@
+// ElevenLabs TTS — eleven_multilingual_v2 met Nederlandse taalinstelling
+// Voice: Sarah (vrouwelijk, helder, multilingual)
+const VOICE_ID = 'EXAVITQu4vr4xnSDxMaL' // Bella — heldere vrouwenstem
+
 export async function POST(request: Request) {
   let text: string
 
@@ -10,29 +14,33 @@ export async function POST(request: Request) {
 
   if (!text) return Response.json({ error: 'Geen tekst opgegeven' }, { status: 400 })
 
-  if (!process.env.OPENAI_API_KEY) {
+  if (!process.env.ELEVENLABS_API_KEY) {
     return Response.json({ error: 'Geen TTS API key' }, { status: 500 })
   }
 
   try {
-    const res = await fetch('https://api.openai.com/v1/audio/speech', {
+    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
+        'xi-api-key': process.env.ELEVENLABS_API_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: 'tts-1-hd',
-        input: text,
-        voice: 'nova',   // heldere vrouwelijke stem, goed voor NL
-        speed: 0.85,
-        response_format: 'mp3',
+        text,
+        model_id: 'eleven_multilingual_v2',
+        language_code: 'nl',
+        voice_settings: {
+          stability: 0.75,
+          similarity_boost: 0.75,
+          style: 0.0,
+          use_speaker_boost: true,
+        },
       }),
     })
 
     if (!res.ok) {
       const err = await res.text()
-      return Response.json({ error: `OpenAI TTS: ${err}` }, { status: 500 })
+      return Response.json({ error: `ElevenLabs TTS: ${err}` }, { status: 500 })
     }
 
     const buffer = await res.arrayBuffer()
