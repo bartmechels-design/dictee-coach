@@ -1,6 +1,17 @@
 import * as path from 'path'
 import { TextToSpeechClient } from '@google-cloud/text-to-speech'
 
+function getTTSClient() {
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    return new TextToSpeechClient({
+      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
+    })
+  }
+  return new TextToSpeechClient({
+    keyFilename: path.join(process.cwd(), 'credentials.json'),
+  })
+}
+
 // Returns one MP3 with the full classroom dictee sequence:
 //   Groep 3:  word — 2s — word
 //   Groep 4+: word — 2s — sentence — 2s — word
@@ -27,9 +38,7 @@ export async function POST(request: Request) {
     : `<speak>${word}<break time="2000ms"/>${word}</speak>`
 
   try {
-    const client = new TextToSpeechClient({
-      keyFilename: path.join(process.cwd(), 'credentials.json'),
-    })
+    const client = getTTSClient()
 
     const [response] = await client.synthesizeSpeech({
       input: { ssml },

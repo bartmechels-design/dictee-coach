@@ -1,6 +1,17 @@
 import * as path from 'path'
 import { TextToSpeechClient } from '@google-cloud/text-to-speech'
 
+function getTTSClient() {
+  if (process.env.GOOGLE_CREDENTIALS_JSON) {
+    return new TextToSpeechClient({
+      credentials: JSON.parse(process.env.GOOGLE_CREDENTIALS_JSON),
+    })
+  }
+  return new TextToSpeechClient({
+    keyFilename: path.join(process.cwd(), 'credentials.json'),
+  })
+}
+
 export async function POST(request: Request) {
   let word: string
 
@@ -16,9 +27,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const client = new TextToSpeechClient({
-      keyFilename: path.join(process.cwd(), 'credentials.json'),
-    })
+    const client = getTTSClient()
 
     const request = {
       input: { text: word },
