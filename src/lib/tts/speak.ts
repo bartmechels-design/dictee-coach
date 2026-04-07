@@ -11,50 +11,66 @@ export type UseTtsReturn = {
   stop: () => void
 }
 
-async function fetchAudioBuffer(ctx: AudioContext, text: string): Promise<AudioBuffer> {
-  const res = await fetch('/api/tts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  })
-  if (!res.ok) throw new Error('TTS API fout')
-  const arrayBuffer = await res.arrayBuffer()
-  return ctx.decodeAudioData(arrayBuffer)
-}
-
-function scheduleBuffer(ctx: AudioContext, buffer: AudioBuffer, when: number): Promise<void> {
-  return new Promise(resolve => {
-    const source = ctx.createBufferSource()
-    source.buffer = buffer
-    source.connect(ctx.destination)
-    source.onended = () => resolve()
-    source.start(when)
-  })
-}
-
 export function useTTS(): UseTtsReturn {
   const [state, setState] = useState<TtsState>('idle')
   const ctxRef = useRef<AudioContext | null>(null)
-  const cancelledRef = useRef(false)
+  const cancelRef = useRef(false)
 
-  const getCtx = useCallback(() => {
+  const getCtx = () => {
     if (!ctxRef.current || ctxRef.current.state === 'closed') {
       ctxRef.current = new AudioContext()
     }
     return ctxRef.current
-  }, [])
+  }
 
   const stop = useCallback(() => {
-    cancelledRef.current = true
-    if (ctxRef.current && ctxRef.current.state !== 'closed') {
-      ctxRef.current.close()
-      ctxRef.current = null
-    }
+    cancelRef.current = true
+    try { ctxRef.current?.close() } catch { /* ignore */ }
+    ctxRef.current = null
+    window.speechSynthesis?.cancel()
     setState('idle')
   }, [])
 
+  // Fetch static MP3 and decode into AudioBuffer
+  const loadWord = async (ctx: AudioContext, word: string): Promise<AudioBuffer | null> => {
+    try {
+      const res = await fetch(`/audio/${encodeURIComponent(word)}.mp3`)
+      if (!res.ok) return null
+      const buf = await res.arrayBuffer()
+      return await ctx.decodeAudioData(buf)
+    } catch {
+      return null
+    }
+  }
+
+  // Schedule an AudioBuffer to play at `when` seconds, resolves when done
+  const playAt = (ctx: AudioContext, buffer: AudioBuffer, when: number): Promise<void> => {
+    return new Promise(resolve => {
+      const src = ctx.createBufferSource()
+      src.buffer = buffer
+      src.connect(ctx.destination)
+      src.onended = () => resolve()
+      src.start(when)
+    })
+  }
+
+  // Browser synthesis for sentences (grade 4+ only)
+  const browserSpeak = (text: string): Promise<void> => {
+    return new Promise(resolve => {
+      window.speechSynthesis.cancel()
+      const utt = new SpeechSynthesisUtterance(text)
+      utt.lang = 'nl-NL'
+      utt.rate = 0.82
+      const dutch = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
+      if (dutch) utt.voice = dutch
+      utt.onend = () => resolve()
+      utt.onerror = () => resolve()
+      window.speechSynthesis.speak(utt)
+    })
+  }
+
   // Classroom dictee:
-  //   Groep 3:  woord → 2s → woord
+  //   Groep 3:  woord → 2s → woord          (via static MP3)
   //   Groep 4+: woord → 2s → zin → 2s → woord
   const speakDictee = useCallback(async (
     word: string,
@@ -62,96 +78,75 @@ export function useTTS(): UseTtsReturn {
     sentence?: string | null,
   ) => {
     if (state !== 'idle') return
-    cancelledRef.current = false
+    cancelRef.current = false
 
     const ctx = getCtx()
-    // Resume AudioContext in response to user gesture (required on iOS)
-    await ctx.resume()
+    await ctx.resume() // iOS requirement: resume from gesture
 
     setState('loading')
 
-    try {
-      // Fetch all audio in parallel
-      const [wordBuf, sentBuf] = await Promise.all([
-        fetchAudioBuffer(ctx, word),
-        grade >= 4 && sentence ? fetchAudioBuffer(ctx, sentence) : Promise.resolve(null),
-      ])
+    const wordBuf = await loadWord(ctx, word)
+    if (cancelRef.current) { setState('idle'); return }
 
-      if (cancelledRef.current) { setState('idle'); return }
+    setState('playing')
 
-      setState('playing')
+    if (wordBuf) {
+      // Web Audio: schedule word → 2s gap → word with precision
+      const PAUSE = 2.0
+      const t0 = ctx.currentTime + 0.05
 
-      const PAUSE = 2.0 // seconds
-      let t = ctx.currentTime + 0.05 // small buffer
+      if (!sentence || grade < 4) {
+        // Groep 3: word → 2s → word (pure AudioContext, no iOS issues)
+        const p1 = playAt(ctx, wordBuf, t0)
+        const p2 = playAt(ctx, wordBuf, t0 + wordBuf.duration + PAUSE)
+        await p1
+        if (cancelRef.current) { setState('idle'); return }
+        await p2
+      } else {
+        // Groep 4+: word → 2s → sentence (browser) → 2s → word
+        await playAt(ctx, wordBuf, t0)
+        if (cancelRef.current) { setState('idle'); return }
 
-      // 1. word
-      await scheduleBuffer(ctx, wordBuf, t)
-      if (cancelledRef.current) { setState('idle'); return }
+        await new Promise<void>(r => setTimeout(r, 2000))
+        if (cancelRef.current) { setState('idle'); return }
 
-      t += wordBuf.duration + PAUSE
+        await browserSpeak(sentence)
+        if (cancelRef.current) { setState('idle'); return }
 
-      // 2. sentence (grade 4+)
-      if (sentBuf) {
-        await scheduleBuffer(ctx, sentBuf, t)
-        if (cancelledRef.current) { setState('idle'); return }
-        t += sentBuf.duration + PAUSE
+        await new Promise<void>(r => setTimeout(r, 2000))
+        if (cancelRef.current) { setState('idle'); return }
+
+        await playAt(ctx, wordBuf, ctx.currentTime + 0.05)
       }
-
-      // 3. word again
-      await scheduleBuffer(ctx, wordBuf, t)
-
-    } catch {
-      // Fallback to browser synthesis
-      setState('playing')
-      await fallbackBrowserDictee(word, grade, sentence ?? null)
+    } else {
+      // Fallback: browser synthesis voor alles
+      await browserSpeak(word)
+      await new Promise<void>(r => setTimeout(r, 2000))
+      if (grade >= 4 && sentence) {
+        await browserSpeak(sentence)
+        await new Promise<void>(r => setTimeout(r, 2000))
+      }
+      await browserSpeak(word)
     }
 
     setState('idle')
-  }, [state, getCtx])
+  }, [state])
 
   const speak = useCallback(async (word: string) => {
     if (state !== 'idle') return
-    cancelledRef.current = false
+    cancelRef.current = false
     const ctx = getCtx()
     await ctx.resume()
     setState('loading')
-
-    try {
-      const buf = await fetchAudioBuffer(ctx, word)
-      if (cancelledRef.current) { setState('idle'); return }
-      setState('playing')
-      await scheduleBuffer(ctx, buf, ctx.currentTime + 0.05)
-    } catch {
-      setState('playing')
-      await fallbackBrowserSpeak(word)
+    const buf = await loadWord(ctx, word)
+    setState('playing')
+    if (buf) {
+      await playAt(ctx, buf, ctx.currentTime + 0.05)
+    } else {
+      await browserSpeak(word)
     }
-
     setState('idle')
-  }, [state, getCtx])
+  }, [state])
 
   return { state, speak, speakDictee, stop }
-}
-
-// Browser synthesis fallbacks
-function fallbackBrowserSpeak(text: string): Promise<void> {
-  return new Promise(resolve => {
-    const utt = new SpeechSynthesisUtterance(text)
-    utt.lang = 'nl-NL'
-    utt.rate = 0.85
-    const dutch = window.speechSynthesis.getVoices().find(v => v.lang.startsWith('nl'))
-    if (dutch) utt.voice = dutch
-    utt.onend = () => resolve()
-    utt.onerror = () => resolve()
-    window.speechSynthesis.speak(utt)
-  })
-}
-
-async function fallbackBrowserDictee(word: string, grade: number, sentence: string | null) {
-  await fallbackBrowserSpeak(word)
-  await new Promise<void>(r => setTimeout(r, 2000))
-  if (grade >= 4 && sentence) {
-    await fallbackBrowserSpeak(sentence)
-    await new Promise<void>(r => setTimeout(r, 2000))
-  }
-  await fallbackBrowserSpeak(word)
 }
